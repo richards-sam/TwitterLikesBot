@@ -2,13 +2,13 @@
   "name": "meowicbot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/bot.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc --build",
     "clean": "tsc --build --clean",
-    "start": "ts-node src/index.ts",
-    "dev": "concurrently -k \"tsc -w\" \"nodemon dist/index.js\""
+    "start": "node dist/bot.js",
+    "dev": "concurrently -k \"tsc -w\" \"nodemon dist/bot.js\""
   },
   "keywords": [],
   "author": "",
