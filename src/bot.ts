@@ -1,19 +1,17 @@
-import { Client, GatewayIntentBits, TextChannel } from 'discord.js';
+import { Client, GatewayIntentBits, MessageReaction, Partials, TextChannel, User } from 'discord.js';
 import { Rettiwt, UserService, Tweet, CursoredData, Cursor } from 'rettiwt-api';
 import getUserService from './configs/twitter.config';
 import dotenv from 'dotenv'
 import TwitterLikesService from './services/TwitterLikesService';
+import { saveTweet } from './services/TweetDbService';
+import { handleReactionAdd } from './services/ReactionService';
 
 dotenv.config();
 
 const twitterEmail = process.env.TWITTER_EMAIL;
 const twitterUsername = process.env.TWITTER_USERNAME;
 const twitterPassword = process.env.TWITTER_PASSWORD;
-
 const meowicTwitterId = process.env.MEOWIC_TWITTER_ID;
-
-const omarDiscordId = process.env.OMAR_DISCORD_ID;
-
 let discordChannelId = process.env.DISCORD_CHANNEL_ID;
 
 if (!twitterEmail || !twitterUsername || !twitterPassword) {
@@ -27,33 +25,34 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
     ],
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 })
 
-const maxRetries = 5;
 
-async function withRetry(fn, args = [], retries = 0) {
-    try {
-        return await fn(...args);
-    } catch (error) {
-        if (retries >= maxRetries) {
-            console.error('Maximum retries exceeded');
-            throw error;
+const userServicePromise = getUserService();
+
+client.on('messageReactionAdd', async (reaction: MessageReaction, user: User) => {
+    // When a reaction is received, check if the structure is partial
+    console.log('Reaction added:', reaction.emoji.name);
+    if (reaction.partial) {
+        // If the message this reaction belongs to was removed, the fetching might result in an API error which should be handled
+        try {
+            await reaction.fetch();
+        } catch (error) {
+            console.error('Something went wrong when fetching the message:', error);
+            // Return as `reaction.message.author` may be undefined/null
+            return;
         }
-        console.error('Failed with error, retrying...', error);
-        // Wait for 2^retries * 1000 ms (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 40000));
-        return withRetry(fn, args, retries + 1);
     }
-}
 
-// Create an instance of the TwitterLikesService which is a promise
-const userServicePromise = withRetry(getUserService);
+    handleReactionAdd(reaction, user);
+});
 
 async function checkAndNotifyChanges(userService, twitterLikesService) {
     console.log('Checking for changes...');
-    const newLikesCursoredData = await withRetry(twitterLikesService.getNewLikes.bind(twitterLikesService), [meowicTwitterId]);
+    const newLikesCursoredData = await twitterLikesService.getNewLikes(meowicTwitterId);
     let newLikes = newLikesCursoredData.list;
 
     if (newLikes.length > 10) {
@@ -64,17 +63,22 @@ async function checkAndNotifyChanges(userService, twitterLikesService) {
     for (const like of newLikes) {
         // Send Discord notification
         try {
-            const channel = await withRetry(client.channels.fetch.bind(client.channels), [discordChannelId]) as TextChannel;
+            const channel = await client.channels.fetch(discordChannelId) as TextChannel;
             if (!channel) {
                 console.error(`Channel with ID ${discordChannelId} not found`);
                 continue;
             }
-            const user = await withRetry(userService.getUserDetails.bind(userService), [like.tweetBy]);
-            //const likeUrl = `https://twitter.com/${user.userName}/status/${like.id}`
+            const user = await userService.getUserDetails(like.tweetBy);
             const likeUrl = `https://vxtwitter.com/${user.userName}/status/${like.id}`
             const messageContent = `Meowic liked this\n${likeUrl}`;
             console.log('Sending message:', messageContent);
-            withRetry(channel.send.bind(channel), [messageContent]);
+            const sentMsg = await channel.send(messageContent);
+            try {
+                const botPostTime = new Date();
+                await saveTweet(like, botPostTime, sentMsg.id);
+            } catch(err) {
+                console.error(`Failed to store tweet in DB: ${err.message}`);
+            }
         } catch(err) {
             console.error(`Failed to send message to channel: ${err}`);
         }
@@ -88,9 +92,6 @@ async function init() {
         console.log('Ready!');
         
         const userService = await userServicePromise;
-        userServicePromise.catch((error) => {
-            console.error('Error in userServicePromise:', error);
-        });
         console.log('userServicePromise resolved')
         const twitterLikesService = new TwitterLikesService(userService);
         
@@ -98,38 +99,26 @@ async function init() {
         //checkAndNotifyChanges(userService, twitterLikesService);
         
         // Set an interval to periodically check for new likes
-        setInterval(() => withRetry(checkAndNotifyChanges.bind(null, userService, twitterLikesService)), (15 + Math.random() * 25) * 60 * 1000);
+        setInterval(() => checkAndNotifyChanges(userService, twitterLikesService), (15 + Math.random() * 25) * 60 * 1000);
     });
 }
 
-//const maxRetries = 5;
-let attempt = 0;
-
-async function attemptLogin() {
+// Attempt to log in
+(async () => {
+    console.log(`Login attempt...`);
     try {
-        console.log(`Login attempt ${attempt + 1}...`);
         await client.login(process.env.DISCORD_TOKEN);
     } catch (error) {
         console.error('Error logging in:', error);
-        attempt++;
-        if (attempt < maxRetries) {
-            // Wait before retrying
-            await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds
-            await attemptLogin();
-        } else {
-            console.error(`Failed to log in after ${maxRetries} attempts.`);
-            process.exit(1);
-        }
+        console.error(`Failed to log in.`);
+        process.exit(1);
     }
-}
+})();
 
 //start main cycle
 (async () => {
     await init();
 })();
-
-// Attempt to log in
-attemptLogin();
 
 client.on('debug', (info) => {
     console.log('Debug:', info);
@@ -143,11 +132,15 @@ client.on('error', (error) => {
     console.error('Error:', error);
 });
 
-const userIdToWatch = omarDiscordId;
-
 client.on('messageCreate', async message => {
-    // React if the message was sent by the user we're watching
-    if (message.author.id === userIdToWatch) {
+    // Ignore messages from bots
+    if (message.author.bot) {
+        return;
+    }
+
+    // Randomly react to any message
+    const randomNumber = Math.floor(Math.random() * 500);
+    if (randomNumber === 0) {
         try {
             await message.react('🤓');
         } catch (error) {
