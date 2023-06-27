@@ -5,6 +5,7 @@ import dotenv from 'dotenv'
 import TwitterLikesService from './services/TwitterLikesService';
 import { saveTweet } from './services/TweetDbService';
 import { handleReactionAdd } from './services/ReactionService';
+import { goreCheck } from './services/GoreCheckService';
 
 dotenv.config();
 
@@ -46,7 +47,6 @@ client.on('messageReactionAdd', async (reaction: MessageReaction, user: User) =>
             return;
         }
     }
-
     handleReactionAdd(reaction, user);
 });
 
@@ -138,11 +138,13 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    await goreCheck(message);
     // Randomly react to any message
     const randomNumber = Math.floor(Math.random() * 500);
     if (randomNumber === 0) {
         try {
             await message.react('🤓');
+            console.log('Nerd reacted to user:', message.author.id);
         } catch (error) {
             console.error('Failed to react to message:', error);
         }

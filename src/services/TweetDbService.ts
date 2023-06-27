@@ -59,3 +59,9 @@ export async function updateReactCount(tweetId: string, newCount: number) {
         console.error('Tweet not found:', tweetId);
     }
 }
+
+export async function findTweetById(tweetId: string) {
+    return await prisma.tweet.findUnique({
+        where: { id: tweetId },
+    });
+}
