@@ -6,7 +6,7 @@ export async function goreCheck(message) {
         return;
     }
     
-    // Extract the tweet ID from the message content
+    // Extract the tweet ID from the message content 
     const tweetId = message.content.match(/\/status\/(\d+)$/)?.[1];
     if (!tweetId) {
         return;
@@ -16,7 +16,7 @@ export async function goreCheck(message) {
     const tweet = await findTweetById(tweetId);
     if (tweet) {
         // If the tweet is found, reply to the message
-        const oldMessageLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${tweet.discordMsgId}`
+        const oldMessageLink = `https://discord.com/channels/${message.guild.id}/${process.env.DISCORD_CHANNEL_ID}/${tweet.discordMsgId}`
         await message.reply(`Gore\n ${oldMessageLink}`);
     }
 }
