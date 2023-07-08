@@ -50,13 +50,51 @@ client.on('messageReactionAdd', async (reaction: MessageReaction, user: User) =>
     handleReactionAdd(reaction, user);
 });
 
+let wasSleeping = false;
+
+function isSleepTime() {
+    const options = {
+        timeZone: 'Pacific/Auckland',
+        hour12: false,
+        hour: 'numeric' as const,
+    };
+
+    const currentHour = parseInt(new Date().toLocaleString('en-US', options), 10);
+    return currentHour <= 11 && currentHour >= 4;
+}
+
+async function sendDiscordMessage(content) {
+    try {
+        const channel = await client.channels.fetch(discordChannelId) as TextChannel;
+        if (!channel) {
+            console.error(`Channel with ID ${discordChannelId} not found`);
+            return;
+        }
+        await channel.send(content);
+    } catch(err) {
+        console.error(`Failed to send message to channel: ${err}`);
+    }
+}
+
 async function checkAndNotifyChanges(userService, twitterLikesService) {
+    if (isSleepTime()) {
+        console.log('Sleep time...');
+        if (!wasSleeping) {
+            await sendDiscordMessage('gn');
+            wasSleeping = true;
+        }
+        return;
+    }
+    if (wasSleeping) {
+        await sendDiscordMessage('gm');
+        wasSleeping = false;
+    }
     console.log('Checking for changes...');
     const newLikesCursoredData = await twitterLikesService.getNewLikes(meowicTwitterId);
     let newLikes = newLikesCursoredData.list;
 
-    if (newLikes.length > 10) {
-        newLikes = newLikes.slice(0, 10);
+    if (newLikes.length > 20) {
+        newLikes = newLikes.slice(0, 20);
     }
     // reverse the array for chronological order
     newLikes = newLikes.reverse();
@@ -95,11 +133,25 @@ async function init() {
         console.log('userServicePromise resolved')
         const twitterLikesService = new TwitterLikesService(userService);
         
-        // Run once immediately on first load
+        // Uncomment to run once on startup :)
         //checkAndNotifyChanges(userService, twitterLikesService);
         
         // Set an interval to periodically check for new likes
-        setInterval(() => checkAndNotifyChanges(userService, twitterLikesService), (15 + Math.random() * 25) * 60 * 1000);
+        setInterval(() => checkAndNotifyChanges(userService, twitterLikesService), (60 + Math.random() * 90) * 60 * 1000);
+
+        setInterval(() => {
+            const options = {
+                timeZone: 'Pacific/Auckland',
+                hour12: false,
+                hour: 'numeric' as const,
+                minute: 'numeric' as const,
+                second: 'numeric' as const
+            };
+        
+            const currentTime = new Date().toLocaleString('en-US', options);
+            console.log(currentTime);
+            console.log('Sleep time:', isSleepTime());
+        }, 1000 * 60 * 5);
     });
 }
 
@@ -133,13 +185,11 @@ client.on('error', (error) => {
 });
 
 client.on('messageCreate', async message => {
-    // Ignore messages from bots
     if (message.author.bot) {
         return;
     }
 
     await goreCheck(message);
-    // Randomly react to any message
     const randomNumber = Math.floor(Math.random() * 500);
     if (randomNumber === 0) {
         try {
