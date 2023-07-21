@@ -9,16 +9,19 @@ import { goreCheck } from './services/GoreCheckService';
 
 dotenv.config();
 
+const requiredEnvVars = ['TWITTER_EMAIL', 'TWITTER_USERNAME', 'TWITTER_PASSWORD', 'MEOWIC_TWITTER_ID', 'DISCORD_CHANNEL_ID'];
+requiredEnvVars.forEach((varName) => {
+    if (!process.env[varName]) {
+        console.error(`Please define ${varName} environment variable.`);
+        process.exit(1);
+    }
+});
+
 const twitterEmail = process.env.TWITTER_EMAIL;
 const twitterUsername = process.env.TWITTER_USERNAME;
 const twitterPassword = process.env.TWITTER_PASSWORD;
 const meowicTwitterId = process.env.MEOWIC_TWITTER_ID;
 let discordChannelId = process.env.DISCORD_CHANNEL_ID;
-
-if (!twitterEmail || !twitterUsername || !twitterPassword) {
-    console.error('Please define TWITTER_EMAIL, TWITTER_USERNAME, and TWITTER_PASSWORD environment variables.');
-    process.exit(1);
-}
 
 const client = new Client({
     intents: [
@@ -31,19 +34,15 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 })
 
-
 const userServicePromise = getUserService();
 
 client.on('messageReactionAdd', async (reaction: MessageReaction, user: User) => {
-    // When a reaction is received, check if the structure is partial
     console.log('Reaction added:', reaction.emoji.name);
     if (reaction.partial) {
-        // If the message this reaction belongs to was removed, the fetching might result in an API error which should be handled
         try {
             await reaction.fetch();
         } catch (error) {
             console.error('Something went wrong when fetching the message:', error);
-            // Return as `reaction.message.author` may be undefined/null
             return;
         }
     }
@@ -57,6 +56,8 @@ function isSleepTime() {
         timeZone: 'Pacific/Auckland',
         hour12: false,
         hour: 'numeric' as const,
+        minute: 'numeric' as const,
+        second: 'numeric' as const
     };
 
     const currentHour = parseInt(new Date().toLocaleString('en-US', options), 10);
@@ -76,30 +77,21 @@ async function sendDiscordMessage(content) {
     }
 }
 
-async function checkAndNotifyChanges(userService, twitterLikesService) {
-    if (isSleepTime()) {
-        console.log('Sleep time...');
-        if (!wasSleeping) {
-            await sendDiscordMessage('gn');
-            wasSleeping = true;
-        }
-        return;
-    }
-    if (wasSleeping) {
-        await sendDiscordMessage('gm');
-        wasSleeping = false;
-    }
-    console.log('Checking for changes...');
+async function fetchNewLikes(userService, twitterLikesService) {
+    console.log('Fetching new likes...');
     const newLikesCursoredData = await twitterLikesService.getNewLikes(meowicTwitterId);
     let newLikes = newLikesCursoredData.list;
-
+    
     if (newLikes.length > 20) {
         newLikes = newLikes.slice(0, 20);
     }
     // reverse the array for chronological order
     newLikes = newLikes.reverse();
+    return newLikes;
+}
+
+async function sendLikeNotifications(userService, newLikes) {
     for (const like of newLikes) {
-        // Send Discord notification
         try {
             const channel = await client.channels.fetch(discordChannelId) as TextChannel;
             if (!channel) {
@@ -121,6 +113,24 @@ async function checkAndNotifyChanges(userService, twitterLikesService) {
             console.error(`Failed to send message to channel: ${err}`);
         }
     }
+}
+
+async function checkAndNotifyChanges(userService, twitterLikesService) {
+    if (isSleepTime()) {
+        console.log('Sleep time...');
+        if (!wasSleeping) {
+            await sendDiscordMessage('gn');
+            wasSleeping = true;
+        }
+        return;
+    }
+    if (wasSleeping) {
+        await sendDiscordMessage('gm');
+        wasSleeping = false;
+    }
+    console.log('Checking for changes...');
+    const newLikes = await fetchNewLikes(userService, twitterLikesService);
+    await sendLikeNotifications(userService, newLikes);
     console.log('Finished checking for changes.');
 }
 
@@ -133,10 +143,6 @@ async function init() {
         console.log('userServicePromise resolved')
         const twitterLikesService = new TwitterLikesService(userService);
         
-        // Uncomment to run once on startup :)
-        //checkAndNotifyChanges(userService, twitterLikesService);
-        
-        // Set an interval to periodically check for new likes
         setInterval(() => checkAndNotifyChanges(userService, twitterLikesService), (60 + Math.random() * 90) * 60 * 1000);
 
         setInterval(() => {
@@ -155,7 +161,6 @@ async function init() {
     });
 }
 
-// Attempt to log in
 (async () => {
     console.log(`Login attempt...`);
     try {
@@ -167,7 +172,6 @@ async function init() {
     }
 })();
 
-//start main cycle
 (async () => {
     await init();
 })();
